@@ -5,6 +5,7 @@ import asyncio
 import urllib3
 import aiohttp
 import os
+import shutil
 
 urllib3.disable_warnings()
 sep = os.sep
@@ -13,7 +14,7 @@ script_dir = os.path.dirname(script_path)
 
 
 class Bilibili:
-    def __init__(self, bvId, sessData='', quality='80'):
+    def __init__(self, bvId, sessData='', quality=64):
 
         self.bvId = bvId
         # sessData用于判断登录状态和是否会员，网页登录BiliBili后，按F12 Application中cookie可以找到
@@ -59,7 +60,6 @@ class Bilibili:
         self.info = html['data']
         self.cid = html['data']['cid']
         
-
     def getResponseData(self):
         playUrl = 'https://api.bilibili.com/x/player/playurl?cid={}&bvid={}&qn={}&type=&otype=json&fourk=1&fnver=0&fnval=16'.format(
             self.cid, self.bvId, self.quality)
@@ -73,7 +73,7 @@ class Bilibili:
         # data = json.loads(window_playinfo)
         return data
 
-    def genarateDir(self):
+    def mkPiecesDir(self):
         print(self.piecesDir)
         try:
             os.makedirs(self.piecesDir)
@@ -83,6 +83,16 @@ class Bilibili:
         else:
             pass
     
+    def rmPiecesDir(self):
+        try:
+            print(self.piecesDir)
+            shutil.rmtree(self.piecesDir)
+            print(1)
+        except:
+            pass
+        else:
+            pass
+
     def getVideoFormat(self):
         if 'flv' in self.data['data']['format']:
             return 'flv'
@@ -90,9 +100,8 @@ class Bilibili:
             if 'mp4' in self.data['data']['format']:
                 return 'mp4'
 
-
-    def taskContent(self, filename):
-        content = "file '"+self.bvDir+'pieces'+sep+filename+"'\n"
+    def concatContent(self, filename):
+        content = "file '"+self.piecesDir+filename+"'\n"
         return content
 
     def writeConcatFile(self, content):
@@ -100,11 +109,18 @@ class Bilibili:
             f.write(content)
             f.close
 
-    def videoMerge(self, taskname, output):
-        sentence = 'ffmpeg -f concat -safe 0 -i ' + taskname + ' -c copy "' + output + '.{}"'
-        sentence = 'ffmpeg -f concat -safe 0 -i "{}" -c copy "{}.{}'.format(taskname,output,self.getVideoFormat())
+    def videoMerge(self, taskFile, output):
+        sentence = 'ffmpeg -f concat -safe 0 -i "{}" -c copy "{}.{}'.format(
+            taskFile, output, self.getVideoFormat())
         print(sentence)
         os.system(sentence)
+    
+    def combineAV(self,videoFile,audioFile,output):
+        sentence = 'ffmpeg -i "{}" -i "{}" -c copy "{}.{}'.format(
+            videoFile , audioFile, output, self.getVideoFormat())
+        print(sentence)
+        os.system(sentence)
+
 
     async def getFileByUrl(self, url, filename):
         print(filename)
@@ -116,30 +132,49 @@ class Bilibili:
                 f.write(content)
                 f.close
 
-    def downloadOne(self, data, headers, filename):
-        pass
-
     def downloadPieces(self, data):
         loop = asyncio.get_event_loop()
         coros = []
         task_content = ''
         for info in data['data']['durl']:
             filename = self.bvId + '_' + str(info['order']) + '.flv'
-            task_content += self.taskContent(filename)
+            task_content += self.concatContent(filename)
             coros.append(self.getFileByUrl(info['url'], filename))
         loop.run_until_complete(asyncio.gather(*coros))
         self.writeConcatFile(task_content)
+        self.videoMerge(self.taskFile, self.bvDir+self.info['title'])
         pass
+
+    def downloadAudioAndVideo(self, data):
+        loop = asyncio.get_event_loop()
+        coros = []
+        filename = self.bvId + '.flv'
+        audioFilename = self.bvId + '_audio.flv'
+        coros.append(self.getFileByUrl(data['data']['dash']['audio'][0]['baseUrl'], audioFilename))
+        
+        for info in data['data']['dash']['video']:
+            if info['id'] == self.quality:
+                coros.append(self.getFileByUrl(info['baseUrl'], filename))
+                break
+        else: 
+            coros.append(self.getFileByUrl(data['data']['dash']['video'][0]['baseUrl'], filename))
+        loop.run_until_complete(asyncio.gather(*coros))
+        self.combineAV(self.piecesDir+filename,self.piecesDir+audioFilename,self.bvDir+self.info['title'])
+        pass
+
 
     def run(self):
         self.getCid()
         self.data = self.getResponseData()
-        # self.genarateDir()
-        # self.downloadPieces(self.data)
-        self.videoMerge(self.taskFile,self.bvDir+self.info['title'])
+        self.mkPiecesDir()
+        if('dash' in self.data['data'].keys()):
+            self.downloadAudioAndVideo(self.data)
+        else:
+            self.downloadPieces(self.data)
+        self.rmPiecesDir()
 
-
-bvId = 'BV1rW41177PX'
+bvId = 'BV1qs411b7uC'
 sessData = '5ba8ed9c%2C1603209842%2C1adf2*41'
-tool = Bilibili(bvId, sessData)
+quality = 64
+tool = Bilibili(bvId, sessData, quality)
 tool.run()
